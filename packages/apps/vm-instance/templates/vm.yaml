@@ -13,6 +13,7 @@ metadata:
     {{- include "virtual-machine.labels" . | nindent 4 }}
 spec:
   running: {{ .Values.running }}
+
   {{- with .Values.instanceType }}
   instancetype:
     kind: VirtualMachineClusterInstancetype
@@ -23,6 +24,7 @@ spec:
     kind: VirtualMachineClusterPreference
     name: {{ . }}
     {{- end }}
+
   template:
     metadata:
       annotations:
@@ -50,6 +52,7 @@ spec:
             deviceName: {{ $gpu.name }}
           {{- end }}
           {{- end }}
+
           disks:
           {{- range $i, $disk := .Values.disks }}
           - name: disk-{{ $disk.name }}
@@ -72,11 +75,14 @@ spec:
             disk:
               bus: virtio
           {{- end }}
+
           interfaces:
           - name: default
             bridge: {}
+
         machine:
           type: ""
+
       {{- with .Values.sshKeys }}
       accessCredentials:
       - sshPublicKey:
@@ -87,25 +93,39 @@ spec:
             # keys will be injected into metadata part of cloud-init disk
             noCloud: {}
       {{- end }}
+
       terminationGracePeriodSeconds: 30
+
       volumes:
       {{- range .Values.disks }}
       - name: disk-{{ .name }}
         dataVolume:
           name: vm-disk-{{ .name }}
       {{- end }}
-      {{- if or .Values.sshKeys .Values.cloudInit }}
+
+      {{- if and .Values.sshKeys .Values.cloudInit }}
       - name: cloudinitdisk
         cloudInitNoCloud:
-        {{- if .Values.cloudInit }}
           secretRef:
             name: {{ include "virtual-machine.fullname" . }}-cloud-init
-        {{- else }}
+      {{- else if .Values.sshKeys }}
+      - name: cloudinitdisk
+        cloudInitNoCloud:
           userData: |
-            #cloud-config
-            final_message: Cloud-init user-data was left blank intentionally.
-        {{- end }}
+            {{ printf "%s" "#cloud-config" }}
+            ssh_authorized_keys:
+              {{- range .Values.sshKeys }}
+              - {{ . }}
+              {{- end }}
+            chpasswd:
+              expire: false
+      {{- else }}
+      - name: cloudinitdisk
+        cloudInitNoCloud:
+          userData: |
+            {{ printf "%s" "#cloud-config" }}
       {{- end }}
+
       networks:
       - name: default
         pod: {}

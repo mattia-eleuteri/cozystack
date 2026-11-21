@@ -346,3 +346,27 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "/core/replicas.: maximum:"
+
+  - it: restores the request-path defaults when entire optional blocks are cleared
+    template: templates/harbor.yaml
+    documentSelector:
+      path: kind
+      value: HelmRelease
+    set:
+      nginx: null
+      portal: null
+      core: null
+      registry: null
+    asserts:
+      - equal:
+          path: spec.values.harbor.nginx.replicas
+          value: 1
+      - equal:
+          path: spec.values.harbor.portal.replicas
+          value: 1
+      - equal:
+          path: spec.values.harbor.core.replicas
+          value: 1
+      - equal:
+          path: spec.values.harbor.registry.replicas
+          value: 1

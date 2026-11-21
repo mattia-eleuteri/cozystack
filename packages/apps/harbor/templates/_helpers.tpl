@@ -32,7 +32,7 @@
   carrying both, so minAvailable is zeroed to leave maxUnavailable alone.
 */}}
 {{- define "harbor.replicaPlacement" -}}
-{{- $replicas := int (index . 0) }}
+{{- $replicas := int (default 1 (index . 0)) }}
 replicas: {{ $replicas }}
 {{- if gt $replicas 1 }}
 podDisruptionBudget:

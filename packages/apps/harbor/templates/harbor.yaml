@@ -249,7 +249,7 @@ metadata:
   labels:
     workloads.cozystack.io/resource-preset: {{ .Values.core.resourcesPreset | quote }}
 spec:
-  replicas: {{ .Values.core.replicas }}
+  replicas: {{ default 1 .Values.core.replicas }}
   minReplicas: 1
   kind: harbor
   type: core
@@ -267,7 +267,7 @@ metadata:
   labels:
     workloads.cozystack.io/resource-preset: {{ .Values.registry.resourcesPreset | quote }}
 spec:
-  replicas: {{ .Values.registry.replicas }}
+  replicas: {{ default 1 .Values.registry.replicas }}
   minReplicas: 1
   kind: harbor
   type: registry
@@ -283,7 +283,7 @@ kind: WorkloadMonitor
 metadata:
   name: {{ $.Release.Name }}-portal
 spec:
-  replicas: {{ .Values.portal.replicas }}
+  replicas: {{ default 1 .Values.portal.replicas }}
   minReplicas: 1
   kind: harbor
   type: portal

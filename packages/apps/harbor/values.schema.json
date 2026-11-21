@@ -38,6 +38,7 @@
           "description": "Number of replicas of the proxy every `docker login`, pull and push goes through. Above 1, adds a PodDisruptionBudget and spreads the replicas by the platform's `globalAppTopologySpreadConstraints`, or softly across zones and nodes when it is unset.",
           "type": "integer",
           "default": 1,
+          "maximum": 2147483647,
           "minimum": 1
         }
       }
@@ -51,6 +52,7 @@
           "description": "Number of web portal replicas. Above 1, adds a PodDisruptionBudget and spreads the replicas by the platform's `globalAppTopologySpreadConstraints`, or softly across zones and nodes when it is unset.",
           "type": "integer",
           "default": 1,
+          "maximum": 2147483647,
           "minimum": 1
         }
       }
@@ -64,6 +66,7 @@
           "description": "Number of core replicas, which issue the token every pull and push needs. Above 1, adds a PodDisruptionBudget and spreads the replicas by the platform's `globalAppTopologySpreadConstraints`, or softly across zones and nodes when it is unset.",
           "type": "integer",
           "default": 1,
+          "maximum": 2147483647,
           "minimum": 1
         },
         "resources": {
@@ -164,6 +167,7 @@
           "description": "Number of registry replicas; they share the S3 bucket and no local state. Above 1, adds a PodDisruptionBudget and spreads the replicas by the platform's `globalAppTopologySpreadConstraints`, or softly across zones and nodes when it is unset.",
           "type": "integer",
           "default": 1,
+          "maximum": 2147483647,
           "minimum": 1
         },
         "resources": {

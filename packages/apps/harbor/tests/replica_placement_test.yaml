@@ -278,3 +278,71 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "/registry/replicas.: minimum: got -1, want 1"
+
+  - it: keeps the request path available when replica counts are cleared
+    template: templates/harbor.yaml
+    documentSelector:
+      path: kind
+      value: HelmRelease
+    set:
+      nginx.replicas: null
+      portal.replicas: null
+      core.replicas: null
+      registry.replicas: null
+    asserts:
+      - equal:
+          path: spec.values.harbor.nginx.replicas
+          value: 1
+      - equal:
+          path: spec.values.harbor.portal.replicas
+          value: 1
+      - equal:
+          path: spec.values.harbor.core.replicas
+          value: 1
+      - equal:
+          path: spec.values.harbor.registry.replicas
+          value: 1
+
+  - it: the core monitor follows the default after replicas are cleared
+    template: templates/harbor.yaml
+    documentSelector:
+      path: metadata.name
+      value: harbor-core
+    set:
+      core.replicas: null
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: the registry monitor follows the default after replicas are cleared
+    template: templates/harbor.yaml
+    documentSelector:
+      path: metadata.name
+      value: harbor-registry
+    set:
+      registry.replicas: null
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: the portal monitor follows the default after replicas are cleared
+    template: templates/harbor.yaml
+    documentSelector:
+      path: metadata.name
+      value: harbor-portal
+    set:
+      portal.replicas: null
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: rejects a count above the Deployment int32 limit
+    template: templates/harbor.yaml
+    set:
+      core.replicas: 2147483648
+    asserts:
+      - failedTemplate:
+          errorPattern: "/core/replicas.: maximum:"

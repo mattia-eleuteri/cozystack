@@ -51,7 +51,7 @@ render_hook() {
 # Emit fake `kubectl`, `date` and `sleep` into <dir>.
 #
 # kubectl reads and writes $STATE, one object per line as
-# kind|release-name|release-namespace|namespace|name|finalizers|deleting, where
+# kind|release-name|release-namespace|namespace|name|finalizers|deleting[|uid], where
 # the two release fields are the Helm annotations (empty when Helm does not own
 # the object), finalizers is a comma-separated list and deleting is 1 once the
 # object has a deletionTimestamp. A listing `get` prints this kind's objects in
@@ -77,8 +77,8 @@ echo "kubectl $*" >> "$KLOG"
 # put <kind> <ns> <name> <finalizers> <deleting>: rewrite the row, or drop it
 # when it is Terminating with nothing left to hold it.
 put() {
-  awk -F'|' -v OFS='|' -v k="$1" -v ns="$2" -v n="$3" -v f="$4" -v d="$5" '
-    $1 == k && $4 == ns && $5 == n { if (d == 1 && f == "") next; $6 = f; $7 = d }
+  awk -F'|' -v OFS='|' -v k="$1" -v ns="$2" -v n="$3" -v f="$4" -v d="$5" -v uid="${6:-}" '
+    $1 == k && $4 == ns && $5 == n { if (d == 1 && f == "") next; $6 = f; $7 = d; if (uid != "") $8 = uid }
     { print }' "$STATE" > "$STATE.new"
   mv "$STATE.new" "$STATE"; }
 case "$1" in
@@ -89,19 +89,28 @@ case "$1" in
         echo "error: the server doesn't have a resource type \"$kind\"" >&2
         exit 1 ;;
     esac
-    awk -F'|' -v k="$kind" '$1 == k { print $2 "|" $3 "|" $4 "|" $5 }' "$STATE"
+    case "$*" in *'{.metadata.uid}'*) with_uid=1 ;; *) with_uid=0 ;; esac
+    awk -F'|' -v k="$kind" -v with_uid="$with_uid" '$1 == k {
+      row = $2 "|" $3 "|" $4 "|" $5
+      if (with_uid) row = row "|" ($8 == "" ? $1 "-" $5 : $8)
+      print row
+    }' "$STATE"
     exit 0 ;;
-  -n)
+  -n|--namespace)
     ns=$2 verb=$3 kind=${4%%.*} name=$5
     row=$(awk -F'|' -v k="$kind" -v ns="$ns" -v n="$name" '$1 == k && $4 == ns && $5 == n' "$STATE")
     if [ -z "$row" ]; then
+      case "$*" in *--ignore-not-found*) exit 0 ;; esac
       echo "Error from server (NotFound): $kind \"$name\" not found" >&2
       exit 1
     fi
     fins=$(echo "$row" | cut -d'|' -f6)
     deleting=$(echo "$row" | cut -d'|' -f7)
+    uid=$(echo "$row" | cut -d'|' -f8)
+    uid=${uid:-"$kind-$name"}
     case "$verb" in
       get)
+        case "$*" in *'{.metadata.uid}'*) printf '%s|' "$uid" ;; esac
         [ "$deleting" = 1 ] && printf '2026-01-01T00:00:00Z'
         printf '|'
         for f in $(echo "$fins" | tr ',' ' '); do printf '%s ' "$f"; done
@@ -117,6 +126,17 @@ case "$1" in
         echo "$kind \"$name\" deleted"
         exit 0 ;;
       patch)
+        if [ "$name" = "${RECREATE_ON_PATCH:-}" ] && [ "$uid" = "$kind-$name" ]; then
+          uid="replacement-$uid"
+          put "$kind" "$ns" "$name" "$fins" 1 "$uid"
+        fi
+        if [ "$name" = "${SHIFT_ON_PATCH:-}" ] && [ "${fins%%,*}" = example.com/finished ]; then
+          fins=${fins#*,}
+          put "$kind" "$ns" "$name" "$fins" "$deleting"
+        fi
+        [ "$name" != "${REFUSE_PATCH:-}" ] || exit 1
+        expected_uid=$(printf '%s' "$*" | sed -n 's|.*"path":"/metadata/uid","value":"\([^"]*\)".*|\1|p')
+        if [ -n "$expected_uid" ] && [ "$expected_uid" != "$uid" ]; then exit 1; fi
         case "$*" in
           *'"finalizers":null'*) fins="" ;;
           *'"op":"remove"'*)
@@ -372,12 +392,12 @@ run_hook() {
     cat "$tmp/out" "$tmp/err"
     false
   fi
-  if ! grep -q '|mixed-rule|example.com/other|1$' "$tmp/state"; then
+  if ! grep --quiet '|mixed-rule|example.com/other|1$' "$tmp/state"; then
     echo "FAIL: the other controller's finalizer was not kept alone on the Terminating object"
     cat "$tmp/state" "$tmp/calls"
     false
   fi
-  if ! grep -q ' patch vmrules.operator.victoriametrics.com mixed-rule ' "$tmp/calls"; then
+  if ! grep --quiet ' patch vmrules.operator.victoriametrics.com mixed-rule ' "$tmp/calls"; then
     echo "FAIL: the operator's finalizer was never patched out"
     cat "$tmp/calls"
     false
@@ -401,20 +421,69 @@ run_hook() {
     cat "$tmp/out" "$tmp/err"
     false
   fi
-  if grep -q ' patch vmrules.operator.victoriametrics.com alerts-node ' "$tmp/calls"; then
+  if grep --quiet ' patch vmrules.operator.victoriametrics.com alerts-node ' "$tmp/calls"; then
     echo "FAIL: the hook patched the finalizer of an object that is not being deleted"
     cat "$tmp/calls"
     false
   fi
-  if ! grep -q '|alerts-node|apps.victoriametrics.com/finalizer|0$' "$tmp/state"; then
+  if ! grep --quiet '|alerts-node|apps.victoriametrics.com/finalizer|0$' "$tmp/state"; then
     echo "FAIL: the object that is not being deleted lost its finalizer"
     cat "$tmp/state"
     false
   fi
-  if grep -q '|vmagent|' "$tmp/state"; then
+  if grep --quiet '|vmagent|' "$tmp/state"; then
     echo "FAIL: one undeletable object kept the hook from finalizing the others"
     cat "$tmp/state" "$tmp/calls"
     false
   fi
   rm -rf "$tmp"
+}
+
+@test "vm cleanup hook preserves the finalizer on a same-name replacement" {
+  tmp=$(mktemp -d)
+  write_fakes "$tmp"
+  write_state "$tmp/state"
+  render_hook vm-objects-cleanup "$tmp/hook.sh"
+  export RECREATE_ON_PATCH=alerts-node
+  run_hook "$tmp"
+  kept=0
+  if [ "$rc" -eq 0 ] && grep --quiet ' patch vmrules.operator.victoriametrics.com alerts-node ' "$tmp/calls" &&
+     grep --quiet '|alerts-node|apps.victoriametrics.com/finalizer|1|replacement-vmrules-alerts-node$' "$tmp/state"; then
+    kept=1
+  fi
+  rm -rf "$tmp"
+  [ "$kept" = 1 ] || return 1
+}
+
+@test "vm cleanup retries when another controller removes its finalizer first" {
+  tmp=$(mktemp -d)
+  write_fakes "$tmp"
+  printf 'vmrules|%s|%s|%s|mixed|example.com/finished,apps.victoriametrics.com/finalizer,example.com/keep|0\n' \
+    "$MA_RELEASE" "$MA_NAMESPACE" "$MA_NAMESPACE" > "$tmp/state"
+  render_hook vm-objects-cleanup "$tmp/hook.sh"
+  export SHIFT_ON_PATCH=mixed SLEEP_ADVANCES=1
+  run_hook "$tmp"
+  kept=0
+  if [ "$rc" -eq 0 ] && [ "$(grep --count ' patch .* mixed ' "$tmp/calls")" = 2 ] &&
+     grep --quiet '|mixed|example.com/keep|1$' "$tmp/state"; then kept=1; fi
+  if [ "$kept" = 0 ]; then cat "$tmp/state" "$tmp/err"; fi
+  rm -rf "$tmp"
+  [ "$kept" = 1 ] || return 1
+}
+
+@test "vm cleanup reports a persistent patch failure and processes the other objects" {
+  tmp=$(mktemp -d)
+  write_fakes "$tmp"
+  write_state "$tmp/state"
+  render_hook vm-objects-cleanup "$tmp/hook.sh"
+  export REFUSE_PATCH=alerts-node SLEEP_ADVANCES=1
+  run_hook "$tmp"
+  bounded=0
+  if [ "$rc" -ne 0 ] && [ "$(cat "$tmp/clock")" -lt 180 ] &&
+     grep --quiet '|alerts-node|apps.victoriametrics.com/finalizer|1$' "$tmp/state" &&
+     [ "$(grep --count "^[a-z]*|$MA_RELEASE|$MA_NAMESPACE|" "$tmp/state")" = 1 ] &&
+     grep --quiet "could not clear .*alerts-node" "$tmp/err"; then bounded=1; fi
+  if [ "$bounded" = 0 ]; then cat "$tmp/state" "$tmp/err"; fi
+  rm -rf "$tmp"
+  [ "$bounded" = 1 ] || return 1
 }
